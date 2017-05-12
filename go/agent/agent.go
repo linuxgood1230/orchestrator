@@ -60,7 +60,9 @@ type Agent struct {
 type SeedOperation struct {
 	SeedId         int64
 	TargetHostname string
+	TargetPort     int
 	SourceHostname string
+	SourcePort     int
 	StartTimestamp string
 	EndTimestamp   string
 	IsComplete     bool

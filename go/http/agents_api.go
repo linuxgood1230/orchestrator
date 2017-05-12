@@ -43,6 +43,7 @@ func (this *HttpAgentsAPI) SubmitAgent(params martini.Params, r render.Render) {
 		return
 	}
 
+	port, _ = strconv.Atoi(params["port"])
 	output, err := agent.SubmitAgent(params["host"], port, params["token"])
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: err.Error()})

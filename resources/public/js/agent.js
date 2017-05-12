@@ -3,7 +3,7 @@ $(document).ready(function() {
 
   var hasActiveSeeds = false;
 
-  $.get(appUrl("/api/agent/" + currentAgentHost()), function(agent) {
+  $.get(appUrl("/api/agent/" + currentAgentHost() + "/" + currentAgentPort()), function(agent) {
     showLoader();
     agent.AvailableLocalSnapshots || (agent.AvailableLocalSnapshots = [])
     agent.AvailableSnapshots || (agent.AvailableSnapshots = [])
@@ -231,7 +231,7 @@ $(document).ready(function() {
     bootbox.confirm(message, function(confirm) {
       if (confirm) {
         showLoader();
-        $.get(appUrl("/api/agent-mysql-stop/" + currentAgentHost()), function(operationResult) {
+        $.get(appUrl("/api/agent-mysql-stop/" + currentAgentHost() + "/" + currentAgentPort()), function(operationResult) {
           hideLoader();
           if (operationResult.Code == "ERROR") {
             addAlert(operationResult.Message)
@@ -244,7 +244,7 @@ $(document).ready(function() {
   });
   $("body").on("click", "button[data-command=mysql-start]", function(event) {
     showLoader();
-    $.get(appUrl("/api/agent-mysql-start/" + currentAgentHost()), function(operationResult) {
+    $.get(appUrl("/api/agent-mysql-start/" + currentAgentHost() + "/" + currentAgentPort()), function(operationResult) {
       hideLoader();
       if (operationResult.Code == "ERROR") {
         addAlert(operationResult.Message)

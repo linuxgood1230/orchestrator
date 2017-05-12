@@ -1598,7 +1598,8 @@ func Cli(command string, strict bool, instance string, destination string, owner
 		}
 	case registerCliCommand("custom-command", "Agent", "Execute a custom command on the agent as defined in the agent conf"):
 		{
-			output, err := agent.CustomCommand(hostnameFlag, pattern)
+			port := 3306
+			output, err := agent.CustomCommand(hostnameFlag, port, pattern)
 			if err != nil {
 				log.Fatale(err)
 			}

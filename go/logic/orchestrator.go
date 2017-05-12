@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"strings"
+	"strconv"
 
 	"github.com/github/orchestrator/go/agent"
 	"github.com/github/orchestrator/go/collection"
@@ -388,15 +390,15 @@ func ContinuousDiscovery() {
 	}
 }
 
-func pollAgent(hostname string) error {
-	polledAgent, err := agent.GetAgent(hostname)
-	agent.UpdateAgentLastChecked(hostname)
+func pollAgent(hostname string, port int) error {
+	polledAgent, err := agent.GetAgent(hostname, port)
+	agent.UpdateAgentLastChecked(hostname, port)
 
 	if err != nil {
 		return log.Errore(err)
 	}
 
-	err = agent.UpdateAgentInfo(hostname, polledAgent)
+	err = agent.UpdateAgentInfo(hostname, port, polledAgent)
 	if err != nil {
 		return log.Errore(err)
 	}
@@ -417,8 +419,11 @@ func ContinuousAgentsPoll() {
 	for range tick {
 		agentsHosts, _ := agent.ReadOutdatedAgentsHosts()
 		log.Debugf("outdated agents hosts: %+v", agentsHosts)
-		for _, hostname := range agentsHosts {
-			go pollAgent(hostname)
+		for _, hostPort := range agentsHosts {
+			host_tmp := strings.Split(hostPort, "|")
+			hostname := host_tmp[0]
+			port, _ := strconv.Atoi(host_tmp[1])
+			go pollAgent(hostname, port)
 		}
 		// See if we should also forget agents (lower frequency)
 		select {

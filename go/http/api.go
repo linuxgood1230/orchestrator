@@ -1737,7 +1737,8 @@ func (this *HttpAPI) Agent(params martini.Params, r render.Render, req *http.Req
 		return
 	}
 
-	agent, err := agent.GetAgent(params["host"])
+	port, _ := strconv.Atoi(params["port"])
+	agent, err := agent.GetAgent(params["host"], port)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1758,7 +1759,8 @@ func (this *HttpAPI) AgentUnmount(params martini.Params, r render.Render, req *h
 		return
 	}
 
-	output, err := agent.Unmount(params["host"])
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.Unmount(params["host"], port)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1779,7 +1781,8 @@ func (this *HttpAPI) AgentMountLV(params martini.Params, r render.Render, req *h
 		return
 	}
 
-	output, err := agent.MountLV(params["host"], req.URL.Query().Get("lv"))
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.MountLV(params["host"], port, req.URL.Query().Get("lv"))
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1800,7 +1803,8 @@ func (this *HttpAPI) AgentCreateSnapshot(params martini.Params, r render.Render,
 		return
 	}
 
-	output, err := agent.CreateSnapshot(params["host"])
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.CreateSnapshot(params["host"], port)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1821,7 +1825,8 @@ func (this *HttpAPI) AgentRemoveLV(params martini.Params, r render.Render, req *
 		return
 	}
 
-	output, err := agent.RemoveLV(params["host"], req.URL.Query().Get("lv"))
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.RemoveLV(params["host"], port, req.URL.Query().Get("lv"))
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1842,7 +1847,8 @@ func (this *HttpAPI) AgentMySQLStop(params martini.Params, r render.Render, req 
 		return
 	}
 
-	output, err := agent.MySQLStop(params["host"])
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.MySQLStop(params["host"], port)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1863,7 +1869,8 @@ func (this *HttpAPI) AgentMySQLStart(params martini.Params, r render.Render, req
 		return
 	}
 
-	output, err := agent.MySQLStart(params["host"])
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.MySQLStart(params["host"], port)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1883,7 +1890,8 @@ func (this *HttpAPI) AgentCustomCommand(params martini.Params, r render.Render, 
 		return
 	}
 
-	output, err := agent.CustomCommand(params["host"], params["command"])
+	port, _ := strconv.Atoi(params["port"])
+	output, err := agent.CustomCommand(params["host"], port,  params["command"])
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -1905,7 +1913,9 @@ func (this *HttpAPI) AgentSeed(params martini.Params, r render.Render, req *http
 		return
 	}
 
-	output, err := agent.Seed(params["targetHost"], params["sourceHost"])
+	targetPort, _ := strconv.Atoi(params["targetPort"])
+	sourcePort, _ := strconv.Atoi(params["sourcePort"])
+	output, err := agent.Seed(params["targetHost"],targetPort,  params["sourceHost"], sourcePort)
 
 	if err != nil {
 		r.JSON(200, &APIResponse{Code: ERROR, Message: fmt.Sprintf("%+v", err)})
@@ -2626,15 +2636,15 @@ func (this *HttpAPI) RegisterRequests(m *martini.ClassicMartini) {
 
 	// Agents
 	this.registerRequest(m, "agents", this.Agents)
-	this.registerRequest(m, "agent/:host", this.Agent)
+	this.registerRequest(m, "agent/:host/:port", this.Agent)
 	this.registerRequest(m, "agent-umount/:host", this.AgentUnmount)
 	this.registerRequest(m, "agent-mount/:host", this.AgentMountLV)
 	this.registerRequest(m, "agent-create-snapshot/:host", this.AgentCreateSnapshot)
 	this.registerRequest(m, "agent-removelv/:host", this.AgentRemoveLV)
-	this.registerRequest(m, "agent-mysql-stop/:host", this.AgentMySQLStop)
-	this.registerRequest(m, "agent-mysql-start/:host", this.AgentMySQLStart)
+	this.registerRequest(m, "agent-mysql-stop/:host/:port", this.AgentMySQLStop)
+	this.registerRequest(m, "agent-mysql-start/:host/:port", this.AgentMySQLStart)
 	this.registerRequest(m, "agent-seed/:targetHost/:sourceHost", this.AgentSeed)
-	this.registerRequest(m, "agent-active-seeds/:host", this.AgentActiveSeeds)
+	this.registerRequest(m, "agent-active-seeds/:host/:port", this.AgentActiveSeeds)
 	this.registerRequest(m, "agent-recent-seeds/:host", this.AgentRecentSeeds)
 	this.registerRequest(m, "agent-seed-details/:seedId", this.AgentSeedDetails)
 	this.registerRequest(m, "agent-seed-states/:seedId", this.AgentSeedStates)

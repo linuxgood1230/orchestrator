@@ -129,9 +129,9 @@ func SubmitAgent(hostname string, port int, token string) (string, error) {
 
 // If a mysql port is available, try to discover against it
 func DiscoverAgentInstance(hostname string, port int) error {
-	agent, err := GetAgent(hostname)
+	agent, err := GetAgent(hostname, port)
 	if err != nil {
-		log.Errorf("Couldn't get agent for %s: %v", hostname, err)
+		log.Errorf("Couldn't get agent for %s %s: %v", hostname, port, err)
 		return err
 	}
 
@@ -162,7 +162,7 @@ func ReadOutdatedAgentsHosts() ([]string, error) {
 	res := []string{}
 	query := `
 		select
-			hostname
+			hostname, port
 		from
 			host_agent
 		where
@@ -170,7 +170,9 @@ func ReadOutdatedAgentsHosts() ([]string, error) {
 			`
 	err := db.QueryOrchestrator(query, sqlutils.Args(config.Config.AgentPollMinutes), func(m sqlutils.RowMap) error {
 		hostname := m.GetString("hostname")
-		res = append(res, hostname)
+		port := m.GetString("port")
+		hostPort := hostname + "|" + port
+		res = append(res, hostPort)
 		return nil
 	})
 
@@ -215,7 +217,7 @@ func ReadAgents() ([]Agent, error) {
 }
 
 // readAgentBasicInfo returns the basic data for an agent directly from backend table (no agent access)
-func readAgentBasicInfo(hostname string) (Agent, string, error) {
+func readAgentBasicInfo(hostname string, port int) (Agent, string, error) {
 	agent := Agent{}
 	token := ""
 	query := `
@@ -228,9 +230,9 @@ func readAgentBasicInfo(hostname string) (Agent, string, error) {
 		from
 			host_agent
 		where
-			hostname = ?
+			hostname = ? and port = ?
 		`
-	err := db.QueryOrchestrator(query, sqlutils.Args(hostname), func(m sqlutils.RowMap) error {
+	err := db.QueryOrchestrator(query, sqlutils.Args(hostname, port), func(m sqlutils.RowMap) error {
 		agent.Hostname = m.GetString("hostname")
 		agent.Port = m.GetInt("port")
 		agent.LastSubmitted = m.GetString("last_submitted")
@@ -251,15 +253,16 @@ func readAgentBasicInfo(hostname string) (Agent, string, error) {
 
 // UpdateAgentLastChecked updates the last_check timestamp in the orchestrator backed database
 // for a given agent
-func UpdateAgentLastChecked(hostname string) error {
+func UpdateAgentLastChecked(hostname string, port int ) error {
 	_, err := db.ExecOrchestrator(`
         	update
         		host_agent
         	set
         		last_checked = NOW()
 			where
-				hostname = ?`,
+				hostname = ? and port = ?`,
 		hostname,
+		port,
 	)
 	if err != nil {
 		return log.Errore(err)
@@ -269,7 +272,7 @@ func UpdateAgentLastChecked(hostname string) error {
 }
 
 // UpdateAgentInfo  updates some agent state in backend table
-func UpdateAgentInfo(hostname string, agent Agent) error {
+func UpdateAgentInfo(hostname string, port int, agent Agent) error {
 	_, err := db.ExecOrchestrator(`
         	update
         		host_agent
@@ -278,10 +281,11 @@ func UpdateAgentInfo(hostname string, agent Agent) error {
         		mysql_port = ?,
         		count_mysql_snapshots = ?
 			where
-				hostname = ?`,
+				hostname = ? and port = ?`,
 		agent.MySQLPort,
 		len(agent.LogicalVolumes),
 		hostname,
+		port,
 	)
 	if err != nil {
 		return log.Errore(err)
@@ -301,9 +305,44 @@ func baseAgentUri(agentHostname string, agentPort int) string {
 	return uri
 }
 
+// GetAgentFromInstanceKey
+func GetAgentFromMySQL(hostname string, mysql_port int) (Agent, error) {
+	res_str :=  []string{}
+	res_int := []int{}
+	query := `
+		select
+			hostname,
+			port
+		from
+			host_agent
+		where
+			hostname = ? and mysql_port = ?
+		`
+
+	err := db.QueryOrchestrator(query, sqlutils.Args(hostname, mysql_port), func(m sqlutils.RowMap) error {
+		hostname := m.GetString("hostname")
+		port     := m.GetInt("port")
+		res_str = append(res_str, hostname )
+		res_int = append(res_int, port)
+		return nil
+	})
+
+	if err != nil {
+		log.Errore(err)
+	}
+
+	agent, err := GetAgent(res_str[0], res_int[0])
+	if err != nil {
+		log.Errore(err)
+	}
+
+	return agent, err
+}
+
+
 // GetAgent gets a single agent status from the agent service. This involves multiple HTTP requests.
-func GetAgent(hostname string) (Agent, error) {
-	agent, token, err := readAgentBasicInfo(hostname)
+func GetAgent(hostname string,port int) (Agent, error) {
+	agent, token, err := readAgentBasicInfo(hostname, port)
 	if err != nil {
 		return agent, log.Errore(err)
 	}
@@ -407,8 +446,8 @@ func GetAgent(hostname string) (Agent, error) {
 
 // executeAgentCommandWithMethodFunc requests an agent to execute a command via HTTP api, either GET or POST,
 // with specific http method implementation by the caller
-func executeAgentCommandWithMethodFunc(hostname string, command string, methodFunc httpMethodFunc, onResponse *func([]byte)) (Agent, error) {
-	agent, token, err := readAgentBasicInfo(hostname)
+func executeAgentCommandWithMethodFunc(hostname string, port int, command string, methodFunc httpMethodFunc, onResponse *func([]byte)) (Agent, error) {
+	agent, token, err := readAgentBasicInfo(hostname, port)
 	if err != nil {
 		return agent, err
 	}
@@ -438,98 +477,98 @@ func executeAgentCommandWithMethodFunc(hostname string, command string, methodFu
 }
 
 // executeAgentCommand requests an agent to execute a command via HTTP api
-func executeAgentCommand(hostname string, command string, onResponse *func([]byte)) (Agent, error) {
+func executeAgentCommand(hostname string, port int, command string, onResponse *func([]byte)) (Agent, error) {
 	httpFunc := func(uri string) (resp *http.Response, err error) {
 		return httpGet(uri)
 	}
-	return executeAgentCommandWithMethodFunc(hostname, command, httpFunc, onResponse)
+	return executeAgentCommandWithMethodFunc(hostname, port, command, httpFunc, onResponse)
 }
 
 // executeAgentPostCommand requests an agent to execute a command via HTTP POST
-func executeAgentPostCommand(hostname string, command string, content string, onResponse *func([]byte)) (Agent, error) {
+func executeAgentPostCommand(hostname string, port int, command string, content string, onResponse *func([]byte)) (Agent, error) {
 	httpFunc := func(uri string) (resp *http.Response, err error) {
 		return httpPost(uri, "text/plain", content)
 	}
-	return executeAgentCommandWithMethodFunc(hostname, command, httpFunc, onResponse)
+	return executeAgentCommandWithMethodFunc(hostname, port, command, httpFunc, onResponse)
 }
 
 // Unmount unmounts the designated snapshot mount point
-func Unmount(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "umount", nil)
+func Unmount(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port,"umount", nil)
 }
 
 // MountLV requests an agent to mount the given volume on the designated mount point
-func MountLV(hostname string, lv string) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("mountlv?lv=%s", lv), nil)
+func MountLV(hostname string, port int, lv string) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("mountlv?lv=%s", lv), nil)
 }
 
 // RemoveLV requests an agent to remvoe a snapshot
-func RemoveLV(hostname string, lv string) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("removelv?lv=%s", lv), nil)
+func RemoveLV(hostname string, port int, lv string) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("removelv?lv=%s", lv), nil)
 }
 
 // CreateSnapshot requests an agent to create a new snapshot -- a DIY implementation
-func CreateSnapshot(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "create-snapshot", nil)
+func CreateSnapshot(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port,"create-snapshot", nil)
 }
 
 // deleteMySQLDatadir requests an agent to purge the MySQL data directory (step before seed)
-func deleteMySQLDatadir(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "delete-mysql-datadir", nil)
+func deleteMySQLDatadir(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port,"delete-mysql-datadir", nil)
 }
 
 // MySQLStop requests an agent to stop MySQL service
-func MySQLStop(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "mysql-stop", nil)
+func MySQLStop(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port,"mysql-stop", nil)
 }
 
 // MySQLStart requests an agent to start the MySQL service
-func MySQLStart(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "mysql-start", nil)
+func MySQLStart(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port,"mysql-start", nil)
 }
 
 // ReceiveMySQLSeedData requests an agent to start listening for incoming seed data
-func ReceiveMySQLSeedData(hostname string, seedId int64) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("receive-mysql-seed-data/%d", seedId), nil)
+func ReceiveMySQLSeedData(hostname string, port int, seedId int64) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("receive-mysql-seed-data/%d", seedId), nil)
 }
 
 // ReceiveMySQLSeedData requests an agent to start sending seed data
-func SendMySQLSeedData(hostname string, targetHostname string, seedId int64) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("send-mysql-seed-data/%s/%d", targetHostname, seedId), nil)
+func SendMySQLSeedData(hostname string, port int, targetHostname string, seedId int64) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("send-mysql-seed-data/%s/%d", targetHostname, seedId), nil)
 }
 
 // ReceiveMySQLSeedData requests an agent to abort seed send/receive (depending on the agent's role)
-func AbortSeedCommand(hostname string, seedId int64) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("abort-seed/%d", seedId), nil)
+func AbortSeedCommand(hostname string, port int, seedId int64) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("abort-seed/%d", seedId), nil)
 }
 
-func CustomCommand(hostname string, cmd string) (output string, err error) {
+func CustomCommand(hostname string, port int, cmd string) (output string, err error) {
 	onResponse := func(body []byte) {
 		output = string(body)
 		log.Debugf("output: %v", output)
 	}
 
-	_, err = executeAgentCommand(hostname, fmt.Sprintf("custom-commands/%s", cmd), &onResponse)
+	_, err = executeAgentCommand(hostname, port, fmt.Sprintf("custom-commands/%s", cmd), &onResponse)
 	return output, err
 }
 
 // seedCommandCompleted checks an agent to see if it thinks a seed was completed.
-func seedCommandCompleted(hostname string, seedId int64) (Agent, bool, error) {
+func seedCommandCompleted(hostname string, port int, seedId int64) (Agent, bool, error) {
 	result := false
 	onResponse := func(body []byte) {
 		json.Unmarshal(body, &result)
 	}
-	agent, err := executeAgentCommand(hostname, fmt.Sprintf("seed-command-completed/%d", seedId), &onResponse)
+	agent, err := executeAgentCommand(hostname, port, fmt.Sprintf("seed-command-completed/%d", seedId), &onResponse)
 	return agent, result, err
 }
 
 // seedCommandCompleted checks an agent to see if it thinks a seed was successful.
-func seedCommandSucceeded(hostname string, seedId int64) (Agent, bool, error) {
+func seedCommandSucceeded(hostname string, port int, seedId int64) (Agent, bool, error) {
 	result := false
 	onResponse := func(body []byte) {
 		json.Unmarshal(body, &result)
 	}
-	agent, err := executeAgentCommand(hostname, fmt.Sprintf("seed-command-succeeded/%d", seedId), &onResponse)
+	agent, err := executeAgentCommand(hostname, port, fmt.Sprintf("seed-command-succeeded/%d", seedId), &onResponse)
 	return agent, result, err
 }
 
@@ -541,30 +580,32 @@ func AbortSeed(seedId int64) error {
 	}
 
 	for _, seedOperation := range seedOperations {
-		AbortSeedCommand(seedOperation.TargetHostname, seedId)
-		AbortSeedCommand(seedOperation.SourceHostname, seedId)
+		AbortSeedCommand(seedOperation.TargetHostname,seedOperation.TargetPort, seedId)
+		AbortSeedCommand(seedOperation.SourceHostname,seedOperation.SourcePort, seedId)
 	}
 	updateSeedComplete(seedId, errors.New("Aborted"))
 	return nil
 }
 
 // PostCopy will request an agent to invoke post-copy commands
-func PostCopy(hostname string) (Agent, error) {
-	return executeAgentCommand(hostname, "post-copy", nil)
+func PostCopy(hostname string, port int) (Agent, error) {
+	return executeAgentCommand(hostname, port, "post-copy", nil)
 }
 
 // SubmitSeedEntry submits a new seed operation entry, returning its unique ID
-func SubmitSeedEntry(targetHostname string, sourceHostname string) (int64, error) {
+func SubmitSeedEntry(targetHostname string, target_port int, sourceHostname string, source_port int) (int64, error) {
 	res, err := db.ExecOrchestrator(`
 			insert
 				into agent_seed (
-					target_hostname, source_hostname, start_timestamp
+					target_hostname, target_port, source_hostname, source_port, start_timestamp
 				) VALUES (
-					?, ?, NOW()
+					?, ?, ?, ?, NOW()
 				)
 			`,
 		targetHostname,
+		target_port,
 		sourceHostname,
+		source_port,
 	)
 	if err != nil {
 		return 0, log.Errore(err)
@@ -661,81 +702,81 @@ func FailStaleSeeds() error {
 
 // executeSeed is *the* function for taking a seed. It is a complex operation of testing, preparing, re-testing
 // agents on both sides, initiating data transfer, following up, awaiting completion, diagnosing errors, claning up.
-func executeSeed(seedId int64, targetHostname string, sourceHostname string) error {
+func executeSeed(seedId int64, targetHostname string, targetPort int, sourceHostname string, sourcePort int) error {
 
 	var err error
 	var seedStateId int64
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("getting target agent info for %s", targetHostname), "")
-	targetAgent, err := GetAgent(targetHostname)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("getting target agent info for %s %s", targetHostname, targetPort), "")
+	targetAgent, err := GetAgent(targetHostname, targetPort)
 	SeededAgents <- &targetAgent
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("getting source agent info for %s", sourceHostname), "")
-	sourceAgent, err := GetAgent(sourceHostname)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("getting source agent info for %s %s", sourceHostname, sourcePort), "")
+	sourceAgent, err := GetAgent(sourceHostname, sourcePort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Checking MySQL status on target %s", targetHostname), "")
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Checking MySQL status on target %s %s", targetHostname, targetPort), "")
 	if targetAgent.MySQLRunning {
 		return updateSeedStateEntry(seedStateId, errors.New("MySQL is running on target host. Cowardly refusing to proceeed. Please stop the MySQL service"))
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Looking up available snapshots on source %s", sourceHostname), "")
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Looking up available snapshots on source %s %s", sourceHostname, sourcePort), "")
 	if len(sourceAgent.LogicalVolumes) == 0 {
 		return updateSeedStateEntry(seedStateId, errors.New("No logical volumes found on source host"))
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Checking mount point on source %s", sourceHostname), "")
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Checking mount point on source %s %s", sourceHostname, sourcePort), "")
 	if sourceAgent.MountPoint.IsMounted {
 		return updateSeedStateEntry(seedStateId, errors.New("Volume already mounted on source host; please unmount"))
 	}
 
 	seedFromLogicalVolume := sourceAgent.LogicalVolumes[0]
 	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Mounting logical volume: %s", seedFromLogicalVolume.Path), "")
-	_, err = MountLV(sourceHostname, seedFromLogicalVolume.Path)
+	_, err = MountLV(sourceHostname, sourcePort, seedFromLogicalVolume.Path)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
-	sourceAgent, err = GetAgent(sourceHostname)
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("MySQL data volume on source host %s is %d bytes", sourceHostname, sourceAgent.MountPoint.MySQLDiskUsage), "")
+	sourceAgent, err = GetAgent(sourceHostname, sourcePort)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("MySQL data volume on source host %s port %s is %d bytes", sourceHostname, sourcePort, sourceAgent.MountPoint.MySQLDiskUsage), "")
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Erasing MySQL data on %s", targetHostname), "")
-	_, err = deleteMySQLDatadir(targetHostname)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Erasing MySQL data on %s %s", targetHostname, targetPort), "")
+	_, err = deleteMySQLDatadir(targetHostname, targetPort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Aquiring target host datadir free space on %s", targetHostname), "")
-	targetAgent, err = GetAgent(targetHostname)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Aquiring target host datadir free space on %s %s", targetHostname, targetPort), "")
+	targetAgent, err = GetAgent(targetHostname, targetPort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
 	if sourceAgent.MountPoint.MySQLDiskUsage > targetAgent.MySQLDatadirDiskFree {
-		Unmount(sourceHostname)
-		return updateSeedStateEntry(seedStateId, fmt.Errorf("Not enough disk space on target host %s. Required: %d, available: %d. Bailing out.", targetHostname, sourceAgent.MountPoint.MySQLDiskUsage, targetAgent.MySQLDatadirDiskFree))
+		Unmount(sourceHostname, sourcePort)
+		return updateSeedStateEntry(seedStateId, fmt.Errorf("Not enough disk space on target host %s %s. Required: %d, available: %d. Bailing out.", targetHostname, targetPort, sourceAgent.MountPoint.MySQLDiskUsage, targetAgent.MySQLDatadirDiskFree))
 	}
 
 	// ...
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("%s will now receive data in background", targetHostname), "")
-	ReceiveMySQLSeedData(targetHostname, seedId)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("%s %s will now receive data in background", targetHostname, targetPort), "")
+	ReceiveMySQLSeedData(targetHostname, targetPort, seedId)
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Waiting some time for %s to start listening for incoming data", targetHostname), "")
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Waiting some time for %s %s to start listening for incoming data", targetHostname, targetPort), "")
 	time.Sleep(2 * time.Second)
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("%s will now send data to %s in background", sourceHostname, targetHostname), "")
-	SendMySQLSeedData(sourceHostname, targetHostname, seedId)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("%s %s will now send data to %s %s in background", sourceHostname, sourcePort, targetHostname, targetPort), "")
+	SendMySQLSeedData(sourceHostname, sourcePort, targetHostname, seedId)
 
 	copyComplete := false
 	numStaleIterations := 0
 	var bytesCopied int64 = 0
 
 	for !copyComplete {
-		targetAgentPoll, err := GetAgent(targetHostname)
+		targetAgentPoll, err := GetAgent(targetHostname, targetPort)
 		if err != nil {
 			return log.Errore(err)
 		}
@@ -746,9 +787,9 @@ func executeSeed(seedId int64, targetHostname string, sourceHostname string) err
 		bytesCopied = targetAgentPoll.MySQLDiskUsage
 
 		copyFailed := false
-		if _, commandCompleted, _ := seedCommandCompleted(targetHostname, seedId); commandCompleted {
+		if _, commandCompleted, _ := seedCommandCompleted(targetHostname, targetPort, seedId); commandCompleted {
 			copyComplete = true
-			if _, commandSucceeded, _ := seedCommandSucceeded(targetHostname, seedId); !commandSucceeded {
+			if _, commandSucceeded, _ := seedCommandSucceeded(targetHostname, targetPort, seedId); !commandSucceeded {
 				// failed.
 				copyFailed = true
 			}
@@ -757,9 +798,9 @@ func executeSeed(seedId int64, targetHostname string, sourceHostname string) err
 			copyFailed = true
 		}
 		if copyFailed {
-			AbortSeedCommand(sourceHostname, seedId)
-			AbortSeedCommand(targetHostname, seedId)
-			Unmount(sourceHostname)
+			AbortSeedCommand(sourceHostname, sourcePort, seedId)
+			AbortSeedCommand(targetHostname, targetPort, seedId)
+			Unmount(sourceHostname, sourcePort)
 			return updateSeedStateEntry(seedStateId, errors.New("10 iterations have passed without progress. Bailing out."))
 		}
 
@@ -776,24 +817,24 @@ func executeSeed(seedId int64, targetHostname string, sourceHostname string) err
 
 	// Cleanup:
 	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Executing post-copy command on %s", targetHostname), "")
-	_, err = PostCopy(targetHostname)
+	_, err = PostCopy(targetHostname, targetPort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
 	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Unmounting logical volume: %s", seedFromLogicalVolume.Path), "")
-	_, err = Unmount(sourceHostname)
+	_, err = Unmount(sourceHostname, sourcePort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Starting MySQL on target: %s", targetHostname), "")
-	_, err = MySQLStart(targetHostname)
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Starting MySQL on target: %s %s", targetHostname, targetPort), "")
+	_, err = MySQLStart(targetHostname, targetPort)
 	if err != nil {
 		return updateSeedStateEntry(seedStateId, err)
 	}
 
-	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Submitting MySQL instance for discovery: %s", targetHostname), "")
+	seedStateId, _ = submitSeedStateEntry(seedId, fmt.Sprintf("Submitting MySQL instance for discovery: %s %s", targetHostname, targetPort), "")
 	SeededAgents <- &targetAgent
 
 	seedStateId, _ = submitSeedStateEntry(seedId, "Done", "")
@@ -802,17 +843,17 @@ func executeSeed(seedId int64, targetHostname string, sourceHostname string) err
 }
 
 // Seed is the entry point for making a seed
-func Seed(targetHostname string, sourceHostname string) (int64, error) {
+func Seed(targetHostname string, targetPort int, sourceHostname string, sourcePort int) (int64, error) {
 	if targetHostname == sourceHostname {
 		return 0, log.Errorf("Cannot seed %s onto itself", targetHostname)
 	}
-	seedId, err := SubmitSeedEntry(targetHostname, sourceHostname)
+	seedId, err := SubmitSeedEntry(targetHostname, targetPort, sourceHostname, sourcePort)
 	if err != nil {
 		return 0, log.Errore(err)
 	}
 
 	go func() {
-		err := executeSeed(seedId, targetHostname, sourceHostname)
+		err := executeSeed(seedId, targetHostname, targetPort, sourceHostname, sourcePort)
 		updateSeedComplete(seedId, err)
 	}()
 
@@ -826,7 +867,9 @@ func readSeeds(whereCondition string, args []interface{}, limit string) ([]SeedO
 		select
 			agent_seed_id,
 			target_hostname,
+			target_port,
 			source_hostname,
+			source_port,
 			start_timestamp,
 			end_timestamp,
 			is_complete,
@@ -842,7 +885,9 @@ func readSeeds(whereCondition string, args []interface{}, limit string) ([]SeedO
 		seedOperation := SeedOperation{}
 		seedOperation.SeedId = m.GetInt64("agent_seed_id")
 		seedOperation.TargetHostname = m.GetString("target_hostname")
+		seedOperation.TargetPort = m.GetInt("target_port")
 		seedOperation.SourceHostname = m.GetString("source_hostname")
+		seedOperation.SourcePort = m.GetInt("source_port")
 		seedOperation.StartTimestamp = m.GetString("start_timestamp")
 		seedOperation.EndTimestamp = m.GetString("end_timestamp")
 		seedOperation.IsComplete = m.GetBool("is_complete")
@@ -933,10 +978,10 @@ func ReadSeedStates(seedId int64) ([]SeedOperationState, error) {
 	return res, err
 }
 
-func RelaylogContentsTail(hostname string, startCoordinates *inst.BinlogCoordinates, onResponse *func([]byte)) (Agent, error) {
-	return executeAgentCommand(hostname, fmt.Sprintf("mysql-relaylog-contents-tail/%s/%d", startCoordinates.LogFile, startCoordinates.LogPos), onResponse)
+func RelaylogContentsTail(hostname string, port int, startCoordinates *inst.BinlogCoordinates, onResponse *func([]byte)) (Agent, error) {
+	return executeAgentCommand(hostname, port, fmt.Sprintf("mysql-relaylog-contents-tail/%s/%d", startCoordinates.LogFile, startCoordinates.LogPos), onResponse)
 }
 
-func ApplyRelaylogContents(hostname string, content string) (Agent, error) {
-	return executeAgentPostCommand(hostname, "apply-relaylog-contents", content, nil)
+func ApplyRelaylogContents(hostname string, port int, content string) (Agent, error) {
+	return executeAgentPostCommand(hostname, port,"apply-relaylog-contents", content, nil)
 }

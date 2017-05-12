@@ -34,6 +34,8 @@ func SyncReplicaRelayLogs(instance, otherInstance *inst.Instance) (*inst.Instanc
 	}
 	log.Debugf("SyncReplicaRelayLogs: stopping replication")
 
+	agent, err := GetAgentFromMySQL(otherInstance.Key.Hostname, otherInstance.Key.Port)
+
 	if instance.ReplicaRunning() {
 		return instance, log.Errorf("SyncReplicaRelayLogs: replication on %+v must not run", instance.Key)
 	}
@@ -52,12 +54,13 @@ func SyncReplicaRelayLogs(instance, otherInstance *inst.Instance) (*inst.Instanc
 	log.Debugf("SyncReplicaRelayLogs: correlated next-coordinates are %+v", *nextCoordinates)
 
 	InitHttpClient()
-	if _, err := RelaylogContentsTail(otherInstance.Key.Hostname, nextCoordinates, &onResponse); err != nil {
+
+	if _, err := RelaylogContentsTail(otherInstance.Key.Hostname, agent.Port, nextCoordinates, &onResponse); err != nil {
 		goto Cleanup
 	}
 	log.Debugf("SyncReplicaRelayLogs: got content (%d bytes)", len(content))
 
-	if _, err := ApplyRelaylogContents(instance.Key.Hostname, content); err != nil {
+	if _, err := ApplyRelaylogContents(instance.Key.Hostname, agent.Port, content); err != nil {
 		goto Cleanup
 	}
 	log.Debugf("SyncReplicaRelayLogs: applied content (%d bytes)", len(content))

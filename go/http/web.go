@@ -312,6 +312,7 @@ func (this *HttpWeb) Agent(params martini.Params, r render.Render, req *http.Req
 		"userId":              getUserId(req, user),
 		"autoshow_problems":   false,
 		"agentHost":           params["host"],
+		"agentPort":           params["port"],
 		"prefix":              this.URLPrefix,
 	})
 }
@@ -440,7 +441,8 @@ func (this *HttpWeb) RegisterRequests(m *martini.ClassicMartini) {
 	m.Get(this.URLPrefix+"/web/audit-failure-detection/id/:id", this.AuditFailureDetection)
 	m.Get(this.URLPrefix+"/web/audit-recovery-steps/:uid", this.AuditRecoverySteps)
 	m.Get(this.URLPrefix+"/web/agents", this.Agents)
-	m.Get(this.URLPrefix+"/web/agent/:host", this.Agent)
+	// m.Get(this.URLPrefix+"/web/agent/:host", this.Agent)
+	m.Get(this.URLPrefix+"/web/agent/:host/:port", this.Agent)
 	m.Get(this.URLPrefix+"/web/seed-details/:seedId", this.AgentSeedDetails)
 	m.Get(this.URLPrefix+"/web/seeds", this.Seeds)
 
